@@ -1,34 +1,63 @@
 import React, { useState } from 'react';
 
-const DialogueForm = ({ onSubmit }) => {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [startTime, setStartTime] = useState('');
+const DialogueForm = ({ onDialogueCreated }) => {
+  const [dialogue, setDialogue] = useState({
+    title: '',
+    description: '',
+    startTime: '',
+    participants: 1
+  });
 
-  const handleSubmit = (e) => {
+  const handleChange = (e) => {
+    const value = e.target.type === 'number' ? parseInt(e.target.value) : e.target.value;
+    setDialogue({ ...dialogue, [e.target.name]: value });
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSubmit({ title, description, startTime });
+    if (typeof onDialogueCreated === 'function') {
+      try {
+        await onDialogueCreated(dialogue);
+        setDialogue({ title: '', description: '', startTime: '', participants: 1 });
+      } catch (error) {
+        console.error('Error creating dialogue:', error);
+      }
+    } else {
+      console.error('onDialogueCreated is not a function');
+    }
   };
 
   return (
     <form onSubmit={handleSubmit}>
       <input
         type="text"
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Dialogue Title"
+        name="title"
+        value={dialogue.title}
+        onChange={handleChange}
+        placeholder="Title"
         required
       />
       <textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        placeholder="Dialogue Description"
+        name="description"
+        value={dialogue.description}
+        onChange={handleChange}
+        placeholder="Description"
         required
       />
       <input
         type="datetime-local"
-        value={startTime}
-        onChange={(e) => setStartTime(e.target.value)}
+        name="startTime"
+        value={dialogue.startTime}
+        onChange={handleChange}
+        required
+      />
+      <input
+        type="number"
+        name="participants"
+        value={dialogue.participants}
+        onChange={handleChange}
+        placeholder="Number of participants"
+        min="1"
         required
       />
       <button type="submit">Create Dialogue</button>

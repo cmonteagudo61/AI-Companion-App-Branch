@@ -1,41 +1,26 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import DialogueForm from '../components/DialogueForm';
+import { createDialogue } from '../api/dialogueAPI';
 
 const CreateDialogue = () => {
-  const [error, setError] = useState('');
-  const { token } = useAuth();
   const navigate = useNavigate();
+  const { token } = useAuth();
 
-  const handleSubmit = async (formData) => {
+  const handleDialogueCreated = async (dialogueData) => {
     try {
-      const response = await fetch('http://localhost:5000/api/dialogues', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(formData)
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create dialogue');
-      }
-
-      const data = await response.json();
-      console.log('Dialogue created:', data);
-      navigate('/dialogues'); // Redirect to dialogues list
-    } catch (err) {
-      setError(err.message);
+      await createDialogue(dialogueData);
+      navigate('/dialogues');
+    } catch (error) {
+      console.error('Error creating dialogue:', error);
     }
   };
 
   return (
-    <div className="create-dialogue">
-      <h2>Create New Dialogue</h2>
-      {error && <p className="error">{error}</p>}
-      <DialogueForm onSubmit={handleSubmit} />
+    <div>
+      <h1>Create New Dialogue</h1>
+      <DialogueForm onDialogueCreated={handleDialogueCreated} />
     </div>
   );
 };

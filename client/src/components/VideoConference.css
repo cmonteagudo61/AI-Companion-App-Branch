@@ -51,6 +51,20 @@
   resize: vertical;
 }
 
+.compiled-summary-container {
+  margin-top: 20px;
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  background-color: #f9f9f9;
+}
+
+.compiled-summary-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
 .controls {
   display: flex;
   flex-wrap: wrap;

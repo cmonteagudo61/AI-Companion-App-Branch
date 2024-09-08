@@ -8,7 +8,7 @@ const anthropicAxios = axios.create({
   headers: {
     'Content-Type': 'application/json',
     'X-API-Key': ANTHROPIC_API_KEY,
-    'anthropic-version': '2023-06-01'  // Add this line
+    'anthropic-version': '2023-06-01'
   },
 });
 
@@ -19,8 +19,9 @@ exports.summarizeText = async (text) => {
       model: "claude-2.0",
       max_tokens_to_sample: 150,
       temperature: 0.5,
+      stop_sequences: ["\nHuman:"]
     });
-    return response.data.completion;
+    return response.data.completion.trim();
   } catch (error) {
     console.error('Error summarizing text:', error.response ? error.response.data : error.message);
     throw error;
@@ -34,8 +35,9 @@ exports.formatTranscript = async (text) => {
       model: "claude-2.0",
       max_tokens_to_sample: 1000,
       temperature: 0.3,
+      stop_sequences: ["\nHuman:"]
     });
-    return response.data.completion;
+    return response.data.completion.trim();
   } catch (error) {
     console.error('Error formatting transcript:', error.response ? error.response.data : error.message);
     throw error;

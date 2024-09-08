@@ -1,4 +1,3 @@
-// src/api/videoAPI.js
 import axios from 'axios';
 
 const API_URL = 'http://localhost:5000/api';
@@ -7,7 +6,6 @@ const videoAxios = axios.create({
   baseURL: API_URL,
 });
 
-// Request interceptor
 videoAxios.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
@@ -22,21 +20,16 @@ videoAxios.interceptors.request.use(
   }
 );
 
-// Response interceptor
 videoAxios.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
       console.error('Response error:', error.response.data);
       console.error('Status:', error.response.status);
       console.error('Headers:', error.response.headers);
     } else if (error.request) {
-      // The request was made but no response was received
       console.error('No response received:', error.request);
     } else {
-      // Something happened in setting up the request that triggered an Error
       console.error('Error setting up request:', error.message);
     }
     return Promise.reject(error);
@@ -55,7 +48,6 @@ export const getVideoToken = async (roomName) => {
   }
 };
 
-// Add other video-related API calls here as needed
 export const createRoom = async (roomName) => {
   try {
     const response = await videoAxios.post('/video/create-room', { roomName });
