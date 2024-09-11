@@ -6,6 +6,8 @@ import './VideoConference.css';
 import ErrorBoundary from './ErrorBoundary';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import AICompanion from './AICompanion';
+import SummaryRating from './SummaryRating';
+import DialogueCompiler from '../services/DialogueCompiler';
 
 const Participant = React.memo(({ participant, isLocal }) => {
   const [videoTrack, setVideoTrack] = useState(null);
@@ -82,16 +84,26 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
   const [summaries, setSummaries] = useState({ main: '', breakouts: {} });
   const [isEditingTranscript, setIsEditingTranscript] = useState(false);
   const [compiledSummary, setCompiledSummary] = useState('');
+  const [satisfactionScores, setSatisfactionScores] = useState({ main: [], breakouts: {} });
+  const [averageSatisfactionScore, setAverageSatisfactionScore] = useState(null);
+  const [finalCompilation, setFinalCompilation] = useState('');
+  const [breakoutCompilation, setBreakoutCompilation] = useState('');
 
   const {
     transcript,
     listening,
     resetTranscript,
     browserSupportsSpeechRecognition
-  } = useSpeechRecognition();
+  } = useSpeechRecognition({
+    continuous: true,
+    interimResults: true
+  });
 
   const transcriptRef = useRef('');
   const roomsRef = useRef({});
+  const formatTimeoutRef = useRef(null);
+  const summaryTimeoutRef = useRef(null);
+  const dialogueCompilerRef = useRef(new DialogueCompiler());
 
   const connectToRoom = useCallback(async (roomName) => {
     const maxRetries = 3;
@@ -152,13 +164,7 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
         console.error(`Attempt ${attempt + 1} failed:`, err);
         if (attempt === maxRetries - 1) {
           console.error('Detailed error connecting to room:', err);
-          if (err.message === 'JWT invalid') {
-            setError('Invalid token. Please try refreshing the page.');
-          } else if (err.message === 'Signaling connection error') {
-            setError('Unable to connect to Twilio servers. Please check your internet connection and try again.');
-          } else {
-            setError(`Could not connect to room: ${err.message}`);
-          }
+          setError(`Could not connect to room: ${err.message}`);
           return null;
         } else {
           await new Promise(resolve => setTimeout(resolve, 1000));
@@ -183,6 +189,8 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
     initializeRooms();
 
     return () => {
+      clearTimeout(formatTimeoutRef.current);
+      clearTimeout(summaryTimeoutRef.current);
       Object.values(roomsRef.current).forEach(room => {
         if (room && typeof room.disconnect === 'function') {
           room.disconnect();
@@ -215,7 +223,8 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
   }, [transcript, onTranscriptionUpdate, activeRoom]);
 
   useEffect(() => {
-    const formatAndUpdateTranscript = async () => {
+    clearTimeout(formatTimeoutRef.current);
+    formatTimeoutRef.current = setTimeout(async () => {
       let currentTranscript;
       if (activeRoom === 'main') {
         currentTranscript = transcripts.main;
@@ -223,7 +232,7 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
         currentTranscript = transcripts.breakouts && transcripts.breakouts[activeRoom];
       }
 
-      if (currentTranscript && currentTranscript.trim() !== '') {
+      if (currentTranscript && currentTranscript.trim() !== '' && currentTranscript.length > 50) {
         try {
           const formatted = await formatTranscript(currentTranscript);
           setFormattedTranscripts(prev => {
@@ -244,15 +253,22 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
           setError(`Error formatting transcript: ${error.message}`);
         }
       }
-    };
+    }, 5000);  // 5 seconds debounce
 
-    const debouncedFormatting = setTimeout(formatAndUpdateTranscript, 2000);
-
-    return () => clearTimeout(debouncedFormatting);
+    return () => clearTimeout(formatTimeoutRef.current);
   }, [transcripts, activeRoom]);
 
+  useEffect(() => {
+    if (formattedTranscripts.main) {
+      dialogueCompilerRef.current.updateTranscript('main', 'main', formattedTranscripts.main);
+    }
+    Object.entries(formattedTranscripts.breakouts).forEach(([roomName, transcript]) => {
+      dialogueCompilerRef.current.updateTranscript('breakout', roomName, transcript);
+    });
+  }, [formattedTranscripts]);
+
   const updateSummary = useCallback(async (text, roomType, roomId) => {
-    if (text && text.trim() !== '') {
+    if (text && text.trim() !== '' && text.length > 100) {  // Only summarize substantial content
       try {
         const newSummary = await summarizeText(text);
         setSummaries(prev => {
@@ -276,24 +292,25 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
   }, []);
 
   useEffect(() => {
-    let currentTranscript;
-    if (activeRoom === 'main') {
-      currentTranscript = formattedTranscripts.main;
-    } else {
-      currentTranscript = formattedTranscripts.breakouts && formattedTranscripts.breakouts[activeRoom];
-    }
-    
-    if (currentTranscript) {
-      const debouncedSummary = setTimeout(() => 
+    clearTimeout(summaryTimeoutRef.current);
+    summaryTimeoutRef.current = setTimeout(() => {
+      let currentTranscript;
+      if (activeRoom === 'main') {
+        currentTranscript = formattedTranscripts.main;
+      } else {
+        currentTranscript = formattedTranscripts.breakouts && formattedTranscripts.breakouts[activeRoom];
+      }
+      
+      if (currentTranscript) {
         updateSummary(
           currentTranscript, 
           activeRoom === 'main' ? 'main' : 'breakouts', 
           activeRoom
-        ), 
-        2000
-      );
-      return () => clearTimeout(debouncedSummary);
-    }
+        );
+      }
+    }, 10000);  // 10 seconds debounce
+
+    return () => clearTimeout(summaryTimeoutRef.current);
   }, [formattedTranscripts, activeRoom, updateSummary]);
 
   useEffect(() => {
@@ -416,143 +433,192 @@ const VideoConference = ({ mainRoomName, onTranscriptionUpdate }) => {
     });
   };
 
-  const createBreakoutRoom = useCallback(async () => {
-    const breakoutRoomName = `Breakout-${Date.now()}`;
-    const room = await connectToRoom(breakoutRoomName);
-    if (room) {
-      setRooms(prev => {
-        const newRooms = { ...prev, breakouts: { ...prev.breakouts, [breakoutRoomName]: room } };
-        roomsRef.current = newRooms;
-        return newRooms;
-      });
-      setTranscripts(prev => ({
-        ...prev,
-        breakouts: { ...prev.breakouts, [breakoutRoomName]: '' }
-      }));
-      setFormattedTranscripts(prev => ({
-        ...prev,
-        breakouts: { ...prev.breakouts, [breakoutRoomName]: '' }
-      }));
-      setSummaries(prev => ({
-        ...prev,
-        breakouts: { ...prev.breakouts, [breakoutRoomName]: '' }
-      }));
-      setActiveRoom(breakoutRoomName);
-    }
-  }, [connectToRoom]);
-
-  const compileAndSummarizeAllTranscripts = useCallback(async () => {
-    const allTranscripts = [
-      formattedTranscripts.main,
-      ...Object.values(formattedTranscripts.breakouts || {})
-    ]
-      .filter(transcript => typeof transcript === 'string' && transcript.trim() !== '')
-      .join('\n\n');
+    const createBreakoutRoom = useCallback(async () => {
+      const breakoutRoomName = `Breakout-${Date.now()}`;
+      const room = await connectToRoom(breakoutRoomName);
+      if (room) {
+        setRooms(prev => {
+          const newRooms = { ...prev, breakouts: { ...prev.breakouts, [breakoutRoomName]: room } };
+          roomsRef.current = newRooms;
+          return newRooms;
+        });
+        setTranscripts(prev => ({
+          ...prev,
+          breakouts: { ...prev.breakouts, [breakoutRoomName]: '' }
+        }));
+        setFormattedTranscripts(prev => ({
+          ...prev,
+          breakouts: { ...prev.breakouts, [breakoutRoomName]: '' }
+        }));
+        setSummaries(prev => ({
+          ...prev,
+          breakouts: { ...prev.breakouts, [breakoutRoomName]: '' }
+        }));
+        setSatisfactionScores(prev => ({
+          ...prev,
+          breakouts: { ...prev.breakouts, [breakoutRoomName]: [] }
+        }));
+        setActiveRoom(breakoutRoomName);
+      }
+    }, [connectToRoom]);
   
-    if (allTranscripts) {
-      try {
-        const summary = await summarizeText(allTranscripts);
-        console.log('Compiled Summary:', summary);
-        setCompiledSummary(summary);
-      } catch (error) {
-        console.error('Error compiling and summarizing transcripts:', error);
-        setError(`Error compiling and summarizing transcripts: ${error.message}`);
+    const compileAndSummarizeAllTranscripts = useCallback(async () => {
+      const allTranscripts = [
+        formattedTranscripts.main,
+        ...Object.values(formattedTranscripts.breakouts || {})
+      ]
+        .filter(transcript => typeof transcript === 'string' && transcript.trim() !== '' && transcript.length > 100)
+        .join('\n\n');
+    
+      if (allTranscripts) {
+        try {
+          const summary = await summarizeText(allTranscripts);
+          console.log('Compiled Summary:', summary);
+          setCompiledSummary(summary);
+        } catch (error) {
+          console.error('Error compiling and summarizing transcripts:', error);
+          setError(`Error compiling and summarizing transcripts: ${error.message}`);
+        }
       }
+    }, [formattedTranscripts]);
+  
+    const handleSatisfactionRating = useCallback((roomName, score) => {
+      setSatisfactionScores(prev => {
+        const newScores = roomName === 'main'
+          ? { ...prev, main: [...prev.main, score] }
+          : {
+              ...prev,
+              breakouts: {
+                ...prev.breakouts,
+                [roomName]: [...(prev.breakouts[roomName] || []), score]
+              }
+            };
+        
+        // Calculate average score for all rooms
+        const allScores = [
+          ...newScores.main,
+          ...Object.values(newScores.breakouts).flat()
+        ];
+        const overallAverage = allScores.reduce((a, b) => a + b, 0) / allScores.length;
+        setAverageSatisfactionScore(overallAverage);
+  
+        return newScores;
+      });
+    }, []);
+  
+    const handleFinalCompilation = useCallback(async () => {
+      const result = await dialogueCompilerRef.current.compileFinal();
+      if (result.success) {
+        setFinalCompilation(result.summary);
+      } else {
+        setError(result.message);
+      }
+    }, []);
+  
+    const handleBreakoutCompilation = useCallback(async () => {
+      const result = await dialogueCompilerRef.current.compileBreakoutRooms();
+      if (result.success) {
+        setBreakoutCompilation(result.summary);
+      } else {
+        setError(result.message);
+      }
+    }, []);
+  
+    if (!browserSupportsSpeechRecognition) {
+      return <span>Browser doesn't support speech recognition.</span>;
     }
-  }, [formattedTranscripts]);
-
-  useEffect(() => {
-    const debouncedSummary = setTimeout(() => {
-      const hasNonEmptyTranscript = Object.values(formattedTranscripts).some(transcript => 
-        typeof transcript === 'string' && transcript.trim() !== ''
-      );
-      if (hasNonEmptyTranscript) {
-        compileAndSummarizeAllTranscripts();
-      }
-    }, 10000); // 10 seconds debounce
-    return () => clearTimeout(debouncedSummary);
-  }, [formattedTranscripts, compileAndSummarizeAllTranscripts]);
-
-  if (!browserSupportsSpeechRecognition) {
-    return <span>Browser doesn't support speech recognition.</span>;
-  }
-
-  const currentRoom = activeRoom === 'main' ? rooms.main : rooms.breakouts[activeRoom];
-  const currentParticipants = activeRoom === 'main' ? participants.main : participants.breakouts[activeRoom] || [];
-  const currentTranscript = activeRoom === 'main' ? transcripts.main : (transcripts.breakouts && transcripts.breakouts[activeRoom]) || '';
-  const currentFormattedTranscript = activeRoom === 'main' ? formattedTranscripts.main : (formattedTranscripts.breakouts && formattedTranscripts.breakouts[activeRoom]) || '';
-  const currentSummary = activeRoom === 'main' ? summaries.main : (summaries.breakouts && summaries.breakouts[activeRoom]) || '';
-
-  return (
-    <ErrorBoundary>
-      <div className="video-conference">
-        {error && <div className="error">{error}</div>}
-        <div className="participants">
-          {currentRoom && <Participant key={currentRoom.localParticipant.sid} participant={currentRoom.localParticipant} isLocal={true} />}
-          {currentParticipants.map(participant => (
-            <Participant key={participant.sid} participant={participant} isLocal={false} />
-          ))}
-        </div>
-        <div className="transcript-container">
-          <h3>Real-time Transcript:</h3>
-          <p className="transcript-text">{currentTranscript}</p>
-        </div>
-        <div className="formatted-transcript-container">
-          <h3>Formatted Transcript:</h3>
-          {isEditingTranscript ? (
-            <>
-              <textarea
-                className="formatted-transcript-text"
-                value={currentFormattedTranscript}
-                onChange={handleTranscriptChange}
-              />
-              <button onClick={handleSaveTranscript}>Save</button>
-            </>
-          ) : (
-            <>
-              <p className="formatted-transcript-text">{currentFormattedTranscript}</p>
-              <button onClick={handleEditTranscript}>Edit</button>
-            </>
-          )}
-        </div>
-        <div className="summary-container">
-          <h3>Current Room Summary:</h3>
-          <p className="summary-text">{currentSummary}</p>
-        </div>
-        <div className="compiled-summary-container">
-          <h3>Compiled Summary of All Rooms:</h3>
-          {compiledSummary ? (
+  
+    return (
+      <ErrorBoundary>
+        <div className="video-conference">
+          {error && <div className="error">{error}</div>}
+          <div className="participants">
+            {activeRoom === 'main' && rooms.main && (
+              <Participant key={rooms.main.localParticipant.sid} participant={rooms.main.localParticipant} isLocal={true} />
+            )}
+            {activeRoom !== 'main' && rooms.breakouts[activeRoom] && (
+              <Participant key={rooms.breakouts[activeRoom].localParticipant.sid} participant={rooms.breakouts[activeRoom].localParticipant} isLocal={true} />
+            )}
+            {participants[activeRoom]?.map(participant => (
+              <Participant key={participant.sid} participant={participant} isLocal={false} />
+            ))}
+          </div>
+          <div className="transcript-container">
+            <h3>Real-time Transcript:</h3>
+            <p className="transcript-text">{activeRoom === 'main' ? transcripts.main : transcripts.breakouts[activeRoom] || ''}</p>
+          </div>
+          <div className="formatted-transcript-container">
+            <h3>Formatted Transcript:</h3>
+            {isEditingTranscript ? (
+              <>
+                <textarea
+                  className="formatted-transcript-text"
+                  value={activeRoom === 'main' ? formattedTranscripts.main : formattedTranscripts.breakouts[activeRoom] || ''}
+                  onChange={handleTranscriptChange}
+                />
+                <button onClick={handleSaveTranscript}>Save</button>
+              </>
+            ) : (
+              <>
+                <p className="formatted-transcript-text">
+                  {activeRoom === 'main' ? formattedTranscripts.main : formattedTranscripts.breakouts[activeRoom] || ''}
+                </p>
+                <button onClick={handleEditTranscript}>Edit</button>
+              </>
+            )}
+          </div>
+          <div className="summary-container">
+            <h3>Current Room Summary:</h3>
+            <p className="summary-text">{activeRoom === 'main' ? summaries.main : summaries.breakouts[activeRoom] || ''}</p>
+            <SummaryRating 
+              roomName={activeRoom}
+              onRate={handleSatisfactionRating}
+              scores={activeRoom === 'main' ? satisfactionScores.main : satisfactionScores.breakouts[activeRoom] || []}
+            />
+          </div>
+          <div className="compiled-summary-container">
+            <h3>Compiled Summary of All Rooms:</h3>
             <p className="compiled-summary-text">{compiledSummary}</p>
-          ) : (
-            <p>Compiling summary... This may take a few moments.</p>
-          )}
-        </div>
-        <AICompanion 
-          transcript={currentFormattedTranscript} 
-          roomName={activeRoom === 'main' ? 'Main Room' : activeRoom}
-        />
-<div className="controls">
-          <button onClick={toggleAudio}>{isAudioMuted ? 'Unmute' : 'Mute'}</button>
-          <button onClick={toggleVideo}>{isVideoOff ? 'Start Video' : 'Stop Video'}</button>
-          <button onClick={toggleListening}>
-            {listening ? 'Stop Recording' : 'Start Recording'}
-          </button>
-          <button onClick={handleResetTranscript}>Reset Transcript</button>
-          <button onClick={endDialogue}>End Dialogue</button>
-          <button onClick={createBreakoutRoom}>Create Breakout Room</button>
-          <button onClick={compileAndSummarizeAllTranscripts}>Compile All Summaries</button>
-        </div>
-        <div className="room-controls">
-          <button onClick={() => setActiveRoom('main')}>Main Room</button>
-          {Object.keys(rooms.breakouts || {}).map(roomName => (
-            <button key={roomName} onClick={() => setActiveRoom(roomName)}>
-              {roomName}
+            {averageSatisfactionScore !== null && (
+              <p>Average Satisfaction Score: {averageSatisfactionScore.toFixed(2)}/5</p>
+            )}
+          </div>
+          <div className="compilation-container">
+            <h3>Final Compilation</h3>
+            <p className="compilation-text">{finalCompilation}</p>
+            <button onClick={handleFinalCompilation}>Generate Final Compilation</button>
+          </div>
+          <div className="compilation-container">
+            <h3>Breakout Rooms Compilation</h3>
+            <p className="compilation-text">{breakoutCompilation}</p>
+            <button onClick={handleBreakoutCompilation}>Generate Breakout Compilation</button>
+          </div>
+          <AICompanion 
+            transcript={activeRoom === 'main' ? formattedTranscripts.main : formattedTranscripts.breakouts[activeRoom] || ''}
+            roomName={activeRoom === 'main' ? 'Main Room' : activeRoom}
+          />
+          <div className="controls">
+            <button onClick={toggleAudio}>{isAudioMuted ? 'Unmute' : 'Mute'}</button>
+            <button onClick={toggleVideo}>{isVideoOff ? 'Start Video' : 'Stop Video'}</button>
+            <button onClick={toggleListening}>
+              {listening ? 'Stop Recording' : 'Start Recording'}
             </button>
-          ))}
+            <button onClick={handleResetTranscript}>Reset Transcript</button>
+            <button onClick={endDialogue}>End Dialogue</button>
+            <button onClick={createBreakoutRoom}>Create Breakout Room</button>
+            <button onClick={compileAndSummarizeAllTranscripts}>Compile All Summaries</button>
+          </div>
+          <div className="room-controls">
+            <button onClick={() => setActiveRoom('main')}>Main Room</button>
+            {Object.keys(rooms.breakouts || {}).map(roomName => (
+              <button key={roomName} onClick={() => setActiveRoom(roomName)}>
+                {roomName}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
-    </ErrorBoundary>
-  );
-};
-
-export default VideoConference;
+      </ErrorBoundary>
+    );
+  };
+  
+  export default VideoConference;
