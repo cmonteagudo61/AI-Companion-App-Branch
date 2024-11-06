@@ -96,3 +96,70 @@
   margin-bottom: 20px;
   font-weight: bold;
 }
+
+/* Add these to your existing VideoConference.css */
+.status-indicators {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  display: flex;
+  gap: 10px;
+}
+
+.recording-status {
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: bold;
+  background-color: #ff4444;
+  color: white;
+  transition: background-color 0.3s;
+}
+
+.recording-status.active {
+  background-color: #00C851;
+}
+
+/* Add to VideoConference.css */
+/* Add to VideoConference.css */
+.status-indicators {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  padding: 10px;
+}
+
+.recording-status {
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: bold;
+  color: white;
+  background-color: #ff4444;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.3s ease;
+}
+
+.recording-status.active {
+  background-color: #00C851;
+}
+
+.recording-status::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
+}

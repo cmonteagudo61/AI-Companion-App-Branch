@@ -1,45 +1,38 @@
-const axios = require('axios');
+import axios from 'axios';
 
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/complete';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const API_URL = 'http://localhost:5000/api/ai'; // Use our backend endpoint instead of calling Anthropic directly
 
-const anthropicAxios = axios.create({
-  baseURL: ANTHROPIC_API_URL,
+const aiAxios = axios.create({
+  baseURL: API_URL,
   headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': ANTHROPIC_API_KEY,
-    'anthropic-version': '2023-06-01'
-  },
+    'Content-Type': 'application/json'
+  }
 });
 
-exports.summarizeText = async (text) => {
+export const summarizeText = async (text) => {
   try {
-    const response = await anthropicAxios.post('', {
-      prompt: `Human: Summarize the following text:\n\n${text}\n\nAssistant: Here's a summary:`,
-      model: "claude-2.0",
-      max_tokens_to_sample: 150,
-      temperature: 0.5,
-      stop_sequences: ["\nHuman:"]
-    });
-    return response.data.completion.trim();
+    console.log('Sending text for summarization:', text);
+    const response = await aiAxios.post('/summarize', { text });
+    console.log('Summary response:', response.data);
+    return response.data.summary;
   } catch (error) {
-    console.error('Error summarizing text:', error.response ? error.response.data : error.message);
-    throw error;
+    console.error('Error summarizing text:', error.message);
+    return text;
   }
 };
 
-exports.formatTranscript = async (text) => {
+export const formatTranscript = async (text) => {
   try {
-    const response = await anthropicAxios.post('', {
-      prompt: `Human: Please format the following transcript into proper sentences with appropriate punctuation and capitalization:\n\n${text}\n\nAssistant: Here's the formatted transcript:`,
-      model: "claude-2.0",
-      max_tokens_to_sample: 1000,
-      temperature: 0.3,
-      stop_sequences: ["\nHuman:"]
-    });
-    return response.data.completion.trim();
+    console.log('Sending text for formatting:', text);
+    if (text.length > 2000) {
+      text = text.slice(0, 2000);
+    }
+    
+    const response = await aiAxios.post('/format', { text });
+    console.log('Format response:', response.data);
+    return response.data.formatted;
   } catch (error) {
-    console.error('Error formatting transcript:', error.response ? error.response.data : error.message);
-    throw error;
+    console.error('Error formatting transcript:', error.message);
+    return text;
   }
 };
